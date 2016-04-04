@@ -32,14 +32,17 @@ import org.sonar.api.batch.fs.InputFile.Type;
 import org.sonar.api.component.ResourcePerspectives;
 import org.sonar.api.config.Settings;
 import org.sonar.api.issue.Issuable;
+import org.sonar.api.issue.Issuable.IssueBuilder;
 import org.sonar.api.profiles.RulesProfile;
 import org.sonar.api.resources.Project;
+import org.sonar.api.resources.Resource;
 import org.sonar.api.rule.RuleKey;
 import org.sonar.api.rules.ActiveRule;
 
 import javax.annotation.Nullable;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.List;
 
 public class FxCopSensor implements Sensor {
@@ -84,11 +87,11 @@ public class FxCopSensor implements Sensor {
 
   @Override
   public void analyse(Project project, SensorContext context) {
-    analyse(context, new FxCopRulesetWriter(), new FxCopReportParser(), new FxCopExecutor());
+    analyse(context, new FxCopRulesetWriter(), new FxCopReportParser(), new FxCopExecutor(), project);
   }
 
   @VisibleForTesting
-  void analyse(SensorContext context, FxCopRulesetWriter writer, FxCopReportParser parser, FxCopExecutor executor) {
+  void analyse(SensorContext context, FxCopRulesetWriter writer, FxCopReportParser parser, FxCopExecutor executor, Project project) {
     fxCopConf.checkProperties(settings);
 
     File reportFile;
@@ -108,29 +111,60 @@ public class FxCopSensor implements Sensor {
     }
 
     for (FxCopIssue issue : parser.parse(reportFile)) {
+      Issuable issuable = null;
+      
       if (!hasFileAndLine(issue)) {
-        logSkippedIssue(issue, "which has no associated file.");
-        continue;
-      }
-
-      File file = new File(new File(issue.path()), issue.file());
-      InputFile inputFile = fs.inputFile(fs.predicates().and(fs.predicates().hasType(Type.MAIN), fs.predicates().hasAbsolutePath(file.getAbsolutePath())));
-      if (inputFile == null) {
-        logSkippedIssueOutsideOfSonarQube(issue, file);
-      } else if (fxCopConf.languageKey().equals(inputFile.language())) {
-        Issuable issuable = perspectives.as(Issuable.class, inputFile);
+        LOG.debug("Create Project Level issue for {}", issue.ruleConfigKey());
+		issuable = perspectives.as(Issuable.class, (Resource) project);
+      } else {
+        issuable = tryGetFileIssuableFrom(issue);
         if (issuable == null) {
-          logSkippedIssueOutsideOfSonarQube(issue, file);
-        } else {
-          issuable.addIssue(
-            issuable.newIssueBuilder()
-              .ruleKey(RuleKey.of(fxCopConf.repositoryKey(), ruleKey(issue.ruleConfigKey())))
-              .line(issue.line())
-              .message(issue.message())
-              .build());
+          LOG.debug("ignoring issue {}, issuable is null", issue.ruleConfigKey());
+          continue;
         }
-      }
+	  }
+      
+      addIssue(issuable, issue);
     }
+  }
+  
+  private Issuable tryGetFileIssuableFrom(FxCopIssue issue) {
+    InputFile inputFile;
+    File file = new File(new File(issue.path()), issue.file()); 
+    LOG.debug("Try create File Level issue {} for {}", file.getAbsolutePath(), issue.ruleConfigKey());
+    
+    try {
+      inputFile = fs.inputFile(fs.predicates().and(fs.predicates().hasType(Type.MAIN), fs.predicates().hasAbsolutePath(file.getCanonicalPath())));
+    } catch (IOException e) {
+      LOG.debug("Exception thrown {}", e.getMessage());
+      logSkippedIssueOutsideOfSonarQube(issue, file);
+      return null;
+    }
+    if (inputFile == null) {
+      LOG.debug("inputFile is null");
+      logSkippedIssueOutsideOfSonarQube(issue, file);
+      return null;
+    } 
+    
+    Issuable issuable = perspectives.as(Issuable.class, inputFile);
+    if (issuable == null) {
+      LOG.debug("issuable is null");
+      logSkippedIssueOutsideOfSonarQube(issue, file);
+      return null;
+    }
+     
+    return issuable;
+  }
+  
+  private void addIssue(Issuable issuable, FxCopIssue issue) {
+    IssueBuilder issueBuilder = issuable.newIssueBuilder()
+                                        .ruleKey(RuleKey.of(fxCopConf.repositoryKey(), ruleKey(issue.ruleConfigKey())))
+                                        .message(issue.message());
+    if (issue.line() != null) {
+      issueBuilder.line(issue.line());
+    }
+    
+    issuable.addIssue(issueBuilder.build());
   }
 
   private static List<String> splitOnCommas(@Nullable String property) {
@@ -150,7 +184,7 @@ public class FxCopSensor implements Sensor {
   }
 
   private static void logSkippedIssue(FxCopIssue issue, String reason) {
-    LOG.debug("Skipping the FxCop issue at line " + issue.reportLine() + " " + reason);
+    LOG.warn("Skipping the FxCop issue at line " + issue.reportLine() + " " + reason);
   }
 
   private List<String> enabledRuleConfigKeys() {

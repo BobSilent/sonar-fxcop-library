@@ -38,6 +38,7 @@ import org.sonar.api.issue.Issuable.IssueBuilder;
 import org.sonar.api.issue.Issue;
 import org.sonar.api.profiles.RulesProfile;
 import org.sonar.api.resources.Project;
+import org.sonar.api.resources.Resource;
 import org.sonar.api.rule.RuleKey;
 import org.sonar.api.rules.ActiveRule;
 
@@ -144,12 +145,26 @@ public class FxCopSensorTest {
     Issue issue3 = mock(Issue.class);
     IssueBuilder issueBuilder3 = mockIssueBuilder();
     when(issueBuilder3.build()).thenReturn(issue3);
+	
+	Issue issue4 = mock(Issue.class);
+    IssueBuilder issueBuilder4 = mockIssueBuilder();
+    when(issueBuilder4.build()).thenReturn(issue4);
+	
+	Issue issue5 = mock(Issue.class);
+    IssueBuilder issueBuilder5 = mockIssueBuilder();
+    when(issueBuilder5.build()).thenReturn(issue5);
 
+	Issue issue6 = mock(Issue.class);
+    IssueBuilder issueBuilder6 = mockIssueBuilder();
+    when(issueBuilder6.build()).thenReturn(issue6);
+	
+	Project project = mock(Project.class);
     Issuable issuable = mock(Issuable.class);
+	when(perspectives.as(Issuable.class, (Resource) project)).thenReturn(issuable);
     when(perspectives.as(Issuable.class, class5InputFile)).thenReturn(issuable);
     when(perspectives.as(Issuable.class, class6InputFile)).thenReturn(issuable);
     when(perspectives.as(Issuable.class, class9InputFile)).thenReturn(issuable);
-    when(issuable.newIssueBuilder()).thenReturn(issueBuilder1, issueBuilder2, issueBuilder3);
+    when(issuable.newIssueBuilder()).thenReturn(issueBuilder4, issueBuilder5, issueBuilder6, issueBuilder1, issueBuilder2, issueBuilder3);
 
     FxCopRulesetWriter writer = mock(FxCopRulesetWriter.class);
 
@@ -166,12 +181,14 @@ public class FxCopSensorTest {
         new FxCopIssue(800, "CA0000", "basePath", "Class8.cs", 8, "Fifth message"),
         new FxCopIssue(800, "CR1000", "basePath", "Class9.cs", 9, "Sixth message")));
 
-    sensor.analyse(context, writer, parser, executor);
+    sensor.analyse(context, writer, parser, executor, project);
 
     verify(writer).write(ImmutableList.of("CA0000", "CA1000", "CR1000"), new File(workingDir, "fxcop-sonarqube.ruleset"));
     verify(executor).execute("FxCopCmd.exe", "MyLibrary.dll", new File(workingDir, "fxcop-sonarqube.ruleset"), new File(workingDir, "fxcop-report.xml"), 42, true,
       ImmutableList.of("c:/", "d:/"), ImmutableList.<String>of());
 
+    verify(issuable).addIssue(issue4);
+    verify(issuable).addIssue(issue5);
     verify(issuable).addIssue(issue1);
     verify(issuable).addIssue(issue2);
     verify(issuable).addIssue(issue3);
@@ -212,7 +229,7 @@ public class FxCopSensorTest {
     FxCopReportParser parser = mock(FxCopReportParser.class);
     FxCopExecutor executor = mock(FxCopExecutor.class);
 
-    sensor.analyse(context, writer, parser, executor);
+    sensor.analyse(context, writer, parser, executor, null);
 
     verify(writer, Mockito.never()).write(Mockito.anyList(), Mockito.any(File.class));
     verify(executor, Mockito.never()).execute(
